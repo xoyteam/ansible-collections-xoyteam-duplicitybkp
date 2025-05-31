@@ -30,6 +30,6 @@
     state: present
     key: "{{ duplicitybkp_sshkey_keygen.public_key }}"
     comment: "{{ duplicitybkp_sshkey_keygen.comment }}"
-  delegate_to: "{{ duplicitybkp_ssh_store_host }}"
+  delegate_to: "{{ duplicitybkp_ssh_store_hostname }}"
   tags: [ssh_key]
 

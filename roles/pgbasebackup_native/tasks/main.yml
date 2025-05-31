@@ -1,0 +1,34 @@
+---
+- name: create directories
+  file:
+    path:  "{{ item.path   }}"
+    state: directory
+    mode:  "{{ item.mode  }}"
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+  loop:
+    - { path: "{{ pgbinbkp_data_path }}", mode: "0700", owner: "root", group: "root" }
+
+- name: install script
+  ansible.builtin.template:
+    src:   "script.sh.j2"
+    dest:  "{{ pgbinbkp_bin_name }}"
+    mode:  "0700"
+    owner: "root"
+    group: "root"
+
+- name: create cron task
+  cron:
+    name:   "pg_basebackup job {{ pgbinbkp_jobname }}"
+    minute: "{{ pgbinbkp_cron_minute }}"
+    hour:   "{{ pgbinbkp_cron_hour }}"
+    job:    "{{ pgbinbkp_bin_name }} >>{{ pgbinbkp_log_name }} 2>&1"
+
+- name: logrotate configure
+  template:
+    src:   "logrotate.j2"
+    dest:  "/etc/logrotate.d/{{ pgbinbkp_jobname }}"
+    mode:  0644
+    owner: "root"
+    group: "root"
+

@@ -1,14 +1,16 @@
 #!/bin/bash
 set -x
-##create mysql dump for any selected database.
 ###******************************************************************************************###
 
-BkpListFile="{{ mysqlbkp_config_name }}"
-BACKUPNAME="{{ bkp_name }}"
-COMPRESS="{{ mysqlbkp_compress }}"
+BACKUPNAME="{{ pgbinbkp_jobname }}"
+BASEBACKUP_DATA_PATH="{{ pgbinbkp_data_path }}"
+PGHOST="{{ pgbinbkp_pghost }}"
+PGPORT="{{ pgbinbkp_pgport }}"
+PGUSER="{{ pgbinbkp_pguser }}"
+PG_PASS="{{ pgbinbkp_pgpass }}"
+PG_BASEBACKUP_OPTIONS="{{ pgbinbkp_basebackup_options }}"
 ###******************************************************************************************###
-MYSQLDUMP="$(command -v mysqldump)"
-GZIP="$(command -v gzip)"
+PG_BASEBACKUP="$(command -v pg_basebackup)"
 DATE="$(command -v date)"
 NOW=$($DATE +%Y%m%d_%H%M%S)
 node_exporter_textfile_dir="{{ node_exporter_textfile_dir }}"
@@ -16,32 +18,19 @@ node_exporter_textfile_dir="{{ node_exporter_textfile_dir }}"
 read -r -d '' METRIC_PREFIX << EOM
 # HELP duplicity_backup frecuency backup
 # TYPE duplicity_backup counter
-duplicity_backup{type="mysql",project="${BACKUPNAME}"}
+duplicity_backup{type="pg_basebackup_native",project="${BACKUPNAME}"}
 EOM
 
 ###******************************************************************************************###
 create_backup_act()
 {
-  while read line;
-  do
-    if [ -z "$line" ]; then return; fi
-    BkpItemAsArray=($line)
-    DbName=${BkpItemAsArray[0]}
-    BackupPath=${BkpItemAsArray[1]}
-    MYSQLSVRHOST=${BkpItemAsArray[2]}
-    PORT=${BkpItemAsArray[3]}
-    USER=${BkpItemAsArray[4]}
-    PASSWD=${BkpItemAsArray[5]}
     set -o pipefail
-    if [ "$COMPRESS" = true ]; then
-      FILE="${BackupPath}/${DbName}.sql.gz"
-      $MYSQLDUMP -f -h "${MYSQLSVRHOST}" -P "${PORT}" -u "${USER}" -p"${PASSWD}" --single-transaction "${DbName}" --no-tablespaces | $GZIP -9 > "$FILE"
-    else
-      FILE="${BackupPath}/${DbName}.sql"
-      $MYSQLDUMP -f -h "${MYSQLSVRHOST}" -P "${PORT}" -u "${USER}" -p"${PASSWD}" --single-transaction "${DbName}" --no-tablespaces > "$FILE"
-    fi
-    rc=$?; ARCHIVE_SIZE=$(du -sh "$FILE")
-    if [[ $rc == 0 ]]; then echo "$NOW: Backup database $DbName was created, archive size $ARCHIVE_SIZE"; fi
+
+    rm -vRf ${BASEBACKUP_DATA_PATH}/{*,.*}
+    PGPASSWORD=$PG_PASS $PG_BASEBACKUP -D "$BASEBACKUP_DATA_PATH" -h "${PGHOST}" -p "${PGPORT}" -U "${PGUSER}" $PG_BASEBACKUP_OPTIONS
+
+    rc=$?; ARCHIVE_SIZE=$(du -sh "${BASEBACKUP_DATA_PATH}")
+    if [[ $rc == 0 ]]; then echo "$NOW: Backup database was created, archive size $ARCHIVE_SIZE"; fi
     if [[ $rc == 0 ]]; then
       if [ -f $node_exporter_textfile_dir/${BACKUPNAME}.prom ]; then
         cat $node_exporter_textfile_dir/${BACKUPNAME}.prom \
