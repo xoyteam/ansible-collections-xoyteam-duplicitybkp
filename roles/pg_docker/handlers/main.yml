@@ -1,0 +1,9 @@
+---
+- name: restart container
+  become: yes
+  docker_compose:
+    project_src: "{{ pgdocker_install_path }}"
+    restarted: yes
+  when:
+    - pgdocker_docker_compose.changed | bool
+    - skip_handlers | default("false") == "false"

@@ -1,0 +1,11 @@
+---
+pgdocker_image_tag: "13.20"
+pgdocker_data_volume: "./data:/var/lib/postgresql/data"
+
+pgdocker_postgres_uid: 999
+pgdocker_postgres_gid: 999
+
+
+docker_compose_home: "/home/docker"
+pgdocker_install_path: "{{ docker_compose_home }}/postgres13"
+

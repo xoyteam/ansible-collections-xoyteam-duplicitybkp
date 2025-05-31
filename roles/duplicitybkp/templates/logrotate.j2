@@ -1,0 +1,8 @@
+{{ backup_dir }}/*/duplicity.log {
+	daily
+	missingok
+	rotate 90
+	compress
+	notifempty
+	create 640 root root
+}

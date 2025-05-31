@@ -1,0 +1,30 @@
+- name: Create base directory {{ pgdocker_install_path }}
+  become: yes
+  file:
+    path: "{{ pgdocker_install_path }}"
+    state: directory
+
+- name: Install docker-compose in {{ pgdocker_install_path }}
+  become: yes
+  template:
+    src: "docker-compose.yml"
+    dest: "{{ pgdocker_install_path }}/"
+    mode: '0644'
+    backup: yes
+  notify: "restart container"
+
+- name: Create configuration directory in {{ pgdocker_install_path }}
+  become: yes
+  file:
+    path: "{{ pgdocker_install_path }}/conf"
+    state: directory
+
+- name: Create data directory in {{ pgdocker_install_path }}
+  become: yes
+  file:
+    path: "{{ pgdocker_install_path }}/data"
+    state: directory
+    owner: "{{ pgdocker_postgres_uid }}"
+    group: "{{ pgdocker_postgres_gid }}"
+    mode: "0700"
+

@@ -1,0 +1,21 @@
+namespace: xoyteam
+name: duplicitybkp
+version: 1.0
+readme: README.md
+authors:
+- Yuriy Zyga <xoy@xoyteam.ru>
+description: backup scripts with duplicity
+license:
+- GPL-3.0-or-later
+license_file: ''
+tags: []
+dependencies: {}
+repository: https://github.com/xoyteam/collection-general
+documentation: https://github.com/xoyteam/collection-general
+homepage: https://github.com/xoyteam/collection-general
+issues: https://github.com/xoyteam/collection-general/issues
+build_ignore: ['.git', 'LICENSE']
+
+
+
+

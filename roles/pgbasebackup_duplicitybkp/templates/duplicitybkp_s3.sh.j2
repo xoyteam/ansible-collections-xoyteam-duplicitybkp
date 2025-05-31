@@ -1,0 +1,61 @@
+#!/bin/bash
+
+# Авторизационные данные для подключения к хранилищу
+export AWS_ACCESS_KEY_ID='{{ duplicitybkp_s3_accesskey }}'
+export AWS_SECRET_ACCESS_KEY='{{ duplicitybkp_s3_secretkey }}'
+
+# Установка переменных
+DATE="$(command -v date)"
+NOW=$($DATE +%Y%m%d_%H%M%S)
+node_exporter_textfile_dir="/var/lib/node_exporter"
+DUPLICITY={{ duplicitybkp_duplicity_path }}
+
+read -r -d '' METRIC_PREFIX << EOM
+# HELP duplicity_backup swift upload
+# TYPE duplicity_upload counter
+duplicity_upload{type="swift",project="{{ backup_name }}"}
+EOM
+
+# Выполнение архивирования
+$DUPLICITY \
+    --volsize {{ backup_volsize|d('500') }} \
+    --no-encryption \
+    --allow-source-mismatch \
+    --full-if-older-than {{ backup_fullevry|d('30D') }} \
+    --exclude-filelist {{ backup_dir }}/{{ backup_name }}/exclude.list \
+    {{ backup_extraopts }} \
+    {{ duplicitybkp_s3_opts }} \
+    {{ backup_target }} \
+    s3://{{ duplicitybkp_s3_bucket }}
+rc=$?;
+    if [[ $rc == 0 ]]; then echo "$NOW: Backup database succefully uploaded to S3"; fi
+    if [[ $rc == 0 ]]; then
+      if [ -f $node_exporter_textfile_dir/{{ backup_name }}_upload.prom ]; then
+        cat $node_exporter_textfile_dir/{{ backup_name }}_upload.prom \
+          | grep -v '^\s*#' \
+          | awk -v PREFIX="$METRIC_PREFIX" '{a = ++$2; if ( a > 9 ) a = 0; print PREFIX, a}' \
+          | tee $node_exporter_textfile_dir/{{ backup_name }}_upload.prom.$ >/dev/null
+        mv $node_exporter_textfile_dir/{{ backup_name }}_upload.prom.$  $node_exporter_textfile_dir/{{ backup_name }}_upload.prom
+      else
+        echo -e "${METRIC_PREFIX} 1" > $node_exporter_textfile_dir/{{ backup_name }}_upload.prom.$
+        mv $node_exporter_textfile_dir/{{ backup_name }}_upload.prom.$  $node_exporter_textfile_dir/{{ backup_name }}_upload.prom
+      fi
+    fi
+
+$DUPLICITY \
+    --no-encryption \
+    remove-older-than {{ backup_removeolder|d('31D') }} \
+    --force \
+    {{ duplicitybkp_s3_opts }} \
+    s3://{{ duplicitybkp_s3_bucket }}
+
+$DUPLICITY \
+    --no-encryption \
+    remove-all-but-n-full {{ backup_fullcopies|d('1') }} \
+    --force \
+    {{ duplicitybkp_s3_opts }} \
+    s3://{{ duplicitybkp_s3_bucket }}
+
+# Очистка авторизационных данных для безопасности
+unset AWS_ACCESS_KEY_ID
+unset AWS_SECRET_ACCESS_KEY

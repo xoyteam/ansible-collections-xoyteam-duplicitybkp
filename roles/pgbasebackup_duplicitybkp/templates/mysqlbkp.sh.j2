@@ -1,0 +1,35 @@
+#!/bin/bash
+set -x
+##create mysql dump for any selected database.
+###******************************************************************************************###
+USER="{{ mysqlbkp_user }}"
+PASSWD="{{ mysqlbkp_pass }}"
+MYSQLSVRHOST="{{ mysqlbkp_host }}"
+PORT="{{ mysqlbkp_port|d('3306') }}"
+# example string mysqlbkp_db_and_userdir [db1]=/user/home1\n[db2]=/user/home2
+BkpListFile="/etc/{{ bkpprefix }}mysqlbkp/mysql"
+###******************************************************************************************###
+MYSQLDUMP="$(command -v mysqldump)"
+GZIP="$(command -v gzip)"
+DATE="$(command -v date)"
+NOW=$($DATE +%Y%m%d_%H%M%S)
+###******************************************************************************************###
+create_backup_act()
+{
+  while read line;
+  do
+    if [ -z "$line" ]; then return; fi
+    BkpItemAsArray=($line)
+    DbName=${BkpItemAsArray[0]}
+    BackupPath=${BkpItemAsArray[1]}
+    FILE="${BackupPath}/${DbName}.sql.gz"
+    $MYSQLDUMP -f -h "$MYSQLSVRHOST" -P "$PORT" -u"$USER" -p"$PASSWD" --single-transaction "${DbName}" | $GZIP -9 > "$FILE"
+    ARCHIVE_SIZE=$(du -sh "$FILE")
+    rc=$?; if [[ $rc == 0 ]]; then echo "$NOW: Backup database $DbName was created, archive size $ARCHIVE_SIZE"; fi
+  done < $BkpListFile
+}
+
+##_MAIN_
+  create_backup_act;
+exit 0
+

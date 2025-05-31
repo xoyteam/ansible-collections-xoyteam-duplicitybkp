@@ -1,0 +1,35 @@
+---
+- name: create backups dir
+  file:
+    path:  "{{ item }}"
+    state: directory
+    owner: "root"
+    group: "{{ backup_user }}"
+    mode:  0770
+  loop:
+    - "{{ duplicitybkp_sshkey_config_path }}"
+
+- name: Generate an OpenSSH keypair
+  community.crypto.openssh_keypair:
+    path: "{{ duplicitybkp_sshkey_name }}"
+    comment: "{{ duplicitybkp_sshkey_jobname_prefix }}@{{ inventory_hostname }}"
+    type: "ed25519"
+    mode: "0600"
+  register: duplicitybkp_sshkey_keygen
+  tags: [ssh_key]
+
+- name: ssh_key | debug duplicitybkp_ssh_store_user
+  ansible.builtin.debug:
+    var: duplicitybkp_ssh_store_user
+    verbosity: 1
+
+- name: set duplicitybkp authorized key
+  become: false
+  ansible.posix.authorized_key:
+    user: "{{ duplicitybkp_ssh_store_user }}"
+    state: present
+    key: "{{ duplicitybkp_sshkey_keygen.public_key }}"
+    comment: "{{ duplicitybkp_sshkey_keygen.comment }}"
+  delegate_to: "{{ duplicitybkp_ssh_store_host }}"
+  tags: [ssh_key]
+

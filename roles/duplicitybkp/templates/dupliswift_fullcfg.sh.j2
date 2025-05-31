@@ -1,0 +1,70 @@
+#!/bin/bash
+
+# Авторизационные данные для подключения к хранилищу
+export SWIFT_PASSWORD="{{ backup_swiftpassword }}"
+export SWIFT_AUTHVERSION="{{ duplicitybkp_swift_auth_version }}"
+export SWIFT_TENANTNAME="{{ duplicitybkp_swift_tenantname }}"
+export SWIFT_AUTHURL="{{ duplicitybkp_swift_authurl }}"
+export SWIFT_USERNAME="{{ backup_swiftuser }}"
+export SWIFT_USER_DOMAIN_NAME="{{ duplicitybkp_swift_userdomain }}"
+export SWIFT_PROJECT_DOMAIN_NAME="{{ duplicitybkp_swift_projectdomain }}"
+
+
+
+# Установка переменных
+DATE="$(command -v date)"
+NOW=$($DATE +%Y%m%d_%H%M%S)
+node_exporter_textfile_dir="/var/lib/node_exporter"
+DUPLICITY={{ duplicitybkp_duplicity_path }}
+
+read -r -d '' METRIC_PREFIX << EOM
+# HELP duplicity_backup swift upload
+# TYPE duplicity_upload counter
+duplicity_upload{type="swift",project="{{ backup_name }}"}
+EOM
+
+# Выполнение архивирования
+$DUPLICITY \
+    --volsize {{ backup_volsize|d('500') }} \
+    --no-encryption \
+    --allow-source-mismatch \
+    --full-if-older-than {{ backup_fullevry|d('30D') }} \
+    --exclude-filelist {{ backup_dir }}/{{ backup_name }}/exclude.list \
+    {{ backup_extraopts }} \
+    {{ backup_target }} \
+    swift://{{ backup_swiftbucket }}
+rc=$?;
+    if [[ $rc == 0 ]]; then echo "$NOW: Backup database succefully uploaded to S3"; fi
+    if [[ $rc == 0 ]]; then
+      if [ -f $node_exporter_textfile_dir/{{ backup_name }}_upload.prom ]; then
+        cat $node_exporter_textfile_dir/{{ backup_name }}_upload.prom \
+          | grep -v '^\s*#' \
+          | awk -v PREFIX="$METRIC_PREFIX" '{a = ++$2; if ( a > 9 ) a = 0; print PREFIX, a}' \
+          | tee $node_exporter_textfile_dir/{{ backup_name }}_upload.prom.$ >/dev/null
+        mv $node_exporter_textfile_dir/{{ backup_name }}_upload.prom.$  $node_exporter_textfile_dir/{{ backup_name }}_upload.prom
+      else
+        echo -e "${METRIC_PREFIX} 1" > $node_exporter_textfile_dir/{{ backup_name }}_upload.prom.$
+        mv $node_exporter_textfile_dir/{{ backup_name }}_upload.prom.$  $node_exporter_textfile_dir/{{ backup_name }}_upload.prom
+      fi
+    fi
+
+$DUPLICITY \
+    --no-encryption \
+    remove-older-than {{ backup_removeolder|d('31D') }} \
+    --force \
+    swift://{{ backup_swiftbucket }}
+
+$DUPLICITY \
+    --no-encryption \
+    remove-all-but-n-full {{ backup_fullcopies|d('1') }} \
+    --force \
+    swift://{{ backup_swiftbucket }}
+
+# Очистка авторизационных данных для безопасности
+unset SWIFT_PASSWORD
+unset SWIFT_AUTHVERSION
+unset SWIFT_TENANTNAME
+unset SWIFT_AUTHURL
+unset SWIFT_USERNAME
+unset SWIFT_USER_DOMAIN_NAME
+unset SWIFT_PROJECT_DOMAIN_NAME

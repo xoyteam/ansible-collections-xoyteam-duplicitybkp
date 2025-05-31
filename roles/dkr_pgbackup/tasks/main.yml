@@ -1,0 +1,29 @@
+- name: Create docker-compose directory {{ dkr_pgbackup_install_path }}
+  become: yes
+  file:
+    path: "{{ dkr_pgbackup_install_path }}"
+    state: directory
+
+- name: Install docker-compose in {{ dkr_pgbackup_install_path }}
+  become: yes
+  template:
+    src: "docker-compose.yml"
+    dest: "{{ dkr_pgbackup_install_path }}/"
+    mode: '0644'
+    backup: yes
+  notify: Restart docker-compose container
+
+- name: Create configuration directory in {{ dkr_pgbackup_install_path }}
+  become: yes
+  file:
+    path: "{{ dkr_pgbackup_install_path }}/cfg"
+    state: directory
+
+- name: Create data directory in {{ dkr_pgbackup_install_path }}
+  become: yes
+  file:
+    path: "{{ dkr_pgbackup_install_path }}/data"
+    state: directory
+    owner: nobody
+    group: nogroup
+

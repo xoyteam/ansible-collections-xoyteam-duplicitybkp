@@ -1,0 +1,9 @@
+{{ mysqlbkp_log_name }} {
+	daily
+	missingok
+	rotate 7
+	compress
+	delaycompress
+	notifempty
+	create 640 root root
+}

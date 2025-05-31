@@ -1,0 +1,38 @@
+#!/bin/bash
+
+# Авторизационные данные для подключения к хранилищу
+export SWIFT_PASSWORD="{{ backup_swiftpassword }}"
+export SWIFT_AUTHVERSION="2"
+export SWIFT_TENANTNAME="{{ backup_swiftuser }}"
+export SWIFT_AUTHURL="https://api.selcdn.ru/v2.0"
+export SWIFT_USERNAME="{{ backup_swiftuser }}"
+
+# Выполнение архивирования
+/usr/bin/duplicity \
+    --volsize {{ backup_volsize|d('500') }} \
+    --no-encryption \
+    --allow-source-mismatch \
+    --full-if-older-than {{ backup_fullevry|d('30D') }} \
+    --exclude-filelist {{ backup_dir }}/{{ backup_name }}/exclude.list \
+    {{ backup_extraopts }} \
+    {{ backup_target }} \
+    swift://{{ backup_swiftbucket }}
+
+/usr/bin/duplicity \
+    --no-encryption \
+    remove-older-than {{ backup_removeolder|d('31D') }} \
+    --force \
+    swift://{{ backup_swiftbucket }}
+
+/usr/bin/duplicity \
+    --no-encryption \
+    remove-all-but-n-full {{ backup_fullcopies|d('1') }} \
+    --force \
+    swift://{{ backup_swiftbucket }}
+
+# Очистка авторизационных данных для безопасности
+unset SWIFT_PASSWORD
+unset SWIFT_AUTHVERSION
+unset SWIFT_TENANTNAME
+unset SWIFT_AUTHURL
+unset SWIFT_USERNAME

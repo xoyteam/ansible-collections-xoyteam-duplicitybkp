@@ -1,0 +1,11 @@
+---
+- name: ensure backup path exists
+  file:
+    path: "{{ bkp_path }}"
+    state: directory
+
+- name: config file create for backup
+  lineinfile:
+    path: /etc/{{ bkpprefix }}mysqlbkp/mysql
+    regexp: "{{ mysql_db }} {{ bkp_path }}"
+    line: "{{ mysql_db }} {{ bkp_path }}"

@@ -1,0 +1,54 @@
+---
+
+- name: debug
+  ansible.builtin.debug:
+    var: bkptype
+    verbosity: 1
+
+- name: add duplicity
+  import_tasks: duplicity.yml
+  when: >
+    ( bkptype == 'duplicity' )
+    or ( bkptype == 'duplicitybkp_ssh' )
+    or ( 's3' in bkptype )
+    or ( 'swift' in bkptype )
+    or ( 'ssh_key' in bkptype )
+
+- name: backup mysql
+  include_tasks: mysql.yml
+  when: bkptype == "mysql"
+
+- name: backup mysql with all params in cfg
+  include_tasks: mysql_fullcfg.yml
+  when: bkptype == "mysql_fullcfg"
+  tags: mysqlbkp_install
+
+- name: configure client for mysql backup
+  include_tasks: mysqlclient.yml
+  when: bkptype == "mysqlclient"
+
+- name: configure client for mysql backup with all params in cfg
+  include_tasks: mysqlclient_fullcfg.yml
+  when: bkptype == "mysqlclient_fullcfg"
+
+- name: swift backup by duplicity
+  include_tasks: swift.yml
+  when: bkptype == "swift"
+
+- name: swift backup by duplicity with prometheus metrics
+  include_tasks: swift_fullcfg.yml
+  when: bkptype == "swift_fullcfg"
+
+- name: s3 backup by duplicity with prometheus metrics
+  include_tasks: duplicitybkp_s3.yml
+  when: bkptype == "duplicitybkp_s3"
+
+- name: ssh backup by duplicity with prometheus metrics
+  include_tasks: ssh_key.yml
+  when: bkptype == "ssh_key"
+  tags: [ssh_key]
+
+- name: ssh-rsync backup by duplicity with prometheus metrics
+  import_tasks: duplicitybkp_ssh.yml
+  when: bkptype == "duplicitybkp_ssh"
+  tags: [duplicitybkp_ssh]

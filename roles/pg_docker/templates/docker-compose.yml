@@ -1,0 +1,14 @@
+---
+services:
+  postgres13:
+    hostname: 'postgres13'
+    image: postgres:{{ pgdocker_image_tag }}
+    ports:
+      - "5433:5432"
+    volumes:
+      - {{ pgdocker_data_volume }}
+      - type: tmpfs
+        target: /dev/shm
+        tmpfs:
+          size: 41943040000 # 4000*2^20 bytes = 128Mb
+    #environment:

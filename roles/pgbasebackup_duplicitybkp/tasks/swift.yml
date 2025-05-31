@@ -1,0 +1,31 @@
+---
+- name: setup backup script for project
+  template:
+    src: dupliswift.sh.j2
+    dest: "{{ backup_dir }}/{{ backup_name }}/dupliswift.sh"
+    mode: 0700
+    owner: root
+    group: root
+
+- name: setup exclude.list for project
+  template:
+    src: exclude.list.j2
+    dest: "{{ backup_dir }}/{{ backup_name }}/exclude.list"
+    mode: 0700
+    owner: root
+    group: root
+
+- name: duplishift log rotation
+  template:
+    src: logrotate.j2
+    dest: /etc/logrotate.d/duplishift
+    owner: root
+    group: root
+    mode: 0644
+
+- name: add cron job
+  cron:
+    name: make {{ backup_name }} swift backup
+    minute: "06"
+    hour:   "2"
+    job:    "{{ backup_dir }}/{{ backup_name }}/dupliswift.sh >{{ backup_dir }}/{{ backup_name }}/duplicity.log 2>&1"

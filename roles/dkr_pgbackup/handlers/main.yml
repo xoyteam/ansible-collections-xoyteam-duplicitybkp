@@ -1,0 +1,7 @@
+---
+- name: restart docker-compose container
+  #  when: dkr_pgbackup_exporter_docker_compose.changed | bool
+  become: yes
+  docker_compose:
+    project_src: "{{ dkr_pgbackup_exporter_install_path }}"
+    restarted: yes

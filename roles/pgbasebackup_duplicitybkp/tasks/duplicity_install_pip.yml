@@ -1,0 +1,14 @@
+---
+- name: install pip upgrade
+  ansible.builtin.pip:
+    name: pip
+    executable: "{{ duplicitybkp_pip_path }}"
+    state: latest
+- name: install pip tools
+  ansible.builtin.pip:
+    name: wheel
+    executable: "{{ duplicitybkp_pip_path }}"
+- name: install duplicity pip
+  ansible.builtin.pip:
+    name: "{{ duplicitybkp_packages_list_pip }}"
+    executable: "{{ duplicitybkp_pip_path }}"

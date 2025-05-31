@@ -1,0 +1,63 @@
+#!/bin/bash
+set -x
+##create mysql dump for any selected database.
+###******************************************************************************************###
+
+BkpListFile="{{ mysqlbkp_config_name }}"
+BACKUPNAME="{{ bkp_name }}"
+COMPRESS="{{ mysqlbkp_compress }}"
+###******************************************************************************************###
+MYSQLDUMP="$(command -v mysqldump)"
+GZIP="$(command -v gzip)"
+DATE="$(command -v date)"
+NOW=$($DATE +%Y%m%d_%H%M%S)
+node_exporter_textfile_dir="{{ node_exporter_textfile_dir }}"
+
+read -r -d '' METRIC_PREFIX << EOM
+# HELP duplicity_backup frecuency backup
+# TYPE duplicity_backup counter
+duplicity_backup{type="mysql",project="${BACKUPNAME}"}
+EOM
+
+###******************************************************************************************###
+create_backup_act()
+{
+  while read line;
+  do
+    if [ -z "$line" ]; then return; fi
+    BkpItemAsArray=($line)
+    DbName=${BkpItemAsArray[0]}
+    BackupPath=${BkpItemAsArray[1]}
+    MYSQLSVRHOST=${BkpItemAsArray[2]}
+    PORT=${BkpItemAsArray[3]}
+    USER=${BkpItemAsArray[4]}
+    PASSWD=${BkpItemAsArray[5]}
+    set -o pipefail
+    if [ "$COMPRESS" = true ]; then
+      FILE="${BackupPath}/${DbName}.sql.gz"
+      $MYSQLDUMP -f -h "${MYSQLSVRHOST}" -P "${PORT}" -u "${USER}" -p"${PASSWD}" --single-transaction "${DbName}" --no-tablespaces | $GZIP -9 > "$FILE"
+    else
+      FILE="${BackupPath}/${DbName}.sql"
+      $MYSQLDUMP -f -h "${MYSQLSVRHOST}" -P "${PORT}" -u "${USER}" -p"${PASSWD}" --single-transaction "${DbName}" --no-tablespaces > "$FILE"
+    fi
+    rc=$?; ARCHIVE_SIZE=$(du -sh "$FILE")
+    if [[ $rc == 0 ]]; then echo "$NOW: Backup database $DbName was created, archive size $ARCHIVE_SIZE"; fi
+    if [[ $rc == 0 ]]; then
+      if [ -f $node_exporter_textfile_dir/${BACKUPNAME}.prom ]; then
+        cat $node_exporter_textfile_dir/${BACKUPNAME}.prom \
+          | grep -v '^\s*#' \
+          | awk -v PREFIX="$METRIC_PREFIX" '{a = ++$2; if ( a > 9 ) a = 1; print PREFIX, a}' \
+          | tee $node_exporter_textfile_dir/${BACKUPNAME}.prom.$ >/dev/null
+        mv $node_exporter_textfile_dir/${BACKUPNAME}.prom.$  $node_exporter_textfile_dir/${BACKUPNAME}.prom
+      else
+        echo -e "${METRIC_PREFIX} 1" > $node_exporter_textfile_dir/${BACKUPNAME}.prom.$
+        mv $node_exporter_textfile_dir/${BACKUPNAME}.prom.$  $node_exporter_textfile_dir/${BACKUPNAME}.prom
+      fi
+    fi
+  done < $BkpListFile
+}
+
+##_MAIN_
+  create_backup_act;
+exit 0
+
