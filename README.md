@@ -1,3 +1,3 @@
-# Ansible Collection - xoyteam.docker_compose_apps
+# Ansible Collection - xoyteam.duplicitybkp
 
-Documentation for the collection.
+duplicity and a set of scripts for integrating various sources (postgres, mysql, docker)
