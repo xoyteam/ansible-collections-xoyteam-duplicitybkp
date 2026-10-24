@@ -3,7 +3,15 @@
 bkp_name: "test"
 backup_user: "backup"
 mysqlbkp_user: "bkp"
-mysqlbkp_pass: "{{ lookup('password', 'credentials/' + mysqlbkp_host + '/mysql_bkp_password length=14 chars=ascii_letters,digits,hexdigits') }}"
+# Группа, которой разрешён обзор каталогов (0750): члены группы могут войти
+# в каталог и увидеть список файлов, но не читать их. Файлы остаются 0600/0700.
+mysqlbkp_dir_group: "adm"
+# Каталог с секретами потребляющего проекта (git-crypt) рядом с playbook.
+mysqlbkp_credentials_dir: "{{ playbook_dir }}/credentials-crypt"
+mysqlbkp_pass_file: "{{ mysqlbkp_credentials_dir }}/{{ mysqlbkp_host | default('') }}/mysql_bkp_password"
+# Пароль MySQL-пользователя только читается из файла. Генерация в публичной
+# коллекции запрещена; отсутствующий/пустой файл приводит к ошибке (tasks/main.yml).
+mysqlbkp_pass: "{{ lookup('ansible.builtin.file', mysqlbkp_pass_file) | trim }}"
 mysqlbkp_compress: false
 
 duplicitybkp_packages_list_pip:

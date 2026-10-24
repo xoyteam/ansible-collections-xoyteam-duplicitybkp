@@ -5,11 +5,42 @@
     state: directory
   tags: mysqlbkp_install
 
+- name: ensure mysql backup directories exist
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0750"
+    owner: "root"
+    group: "{{ mysqlbkp_dir_group }}"
+  loop:
+    - "{{ mysqlbkp_config_path }}"
+    - "{{ mysqlbkp_data_path }}"
+    - "{{ mysqlbkp_log_path }}"
+  tags: mysqlbkp_install
+
+- name: ensure config file exists
+  file:
+    path: "{{ mysqlbkp_config_name }}"
+    state: touch
+    mode: "0600"
+    owner: "root"
+    group: "root"
+  tags: mysqlbkp_install
+
+- name: ensure log file exists
+  file:
+    path: "{{ mysqlbkp_log_name }}"
+    state: touch
+    mode: "0600"
+    owner: "root"
+    group: "root"
+  tags: mysqlbkp_install
+
 - name: script setup
   template:
     src: "mysqlbkp_fullcfg.sh.j2"
     dest: "{{ mysqlbkp_bin_name }}"
-    mode: 0750
+    mode: 0700
     owner: "root"
     group: "root"
   tags: mysqlbkp_install
@@ -19,7 +50,7 @@
     name: "mysql backup by list"
     minute: "03"
     hour: "0"
-    job: "{{ mysqlbkp_bin_name }} >{{ mysqlbkp_log_name }} 2>&1"
+    job: "umask 077; {{ mysqlbkp_bin_name }} >{{ mysqlbkp_log_name }} 2>&1"
   tags: mysqlbkp_install
 
 - name: logrotate mysqlbkp

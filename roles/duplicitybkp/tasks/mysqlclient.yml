@@ -1,11 +1,26 @@
 ---
+- name: ensure config directory exists
+  file:
+    path: "/etc/{{ bkpprefix }}mysqlbkp"
+    state: directory
+    mode: "0750"
+    owner: "root"
+    group: "{{ mysqlbkp_dir_group }}"
+
 - name: ensure backup path exists
   file:
     path: "{{ bkp_path }}"
     state: directory
+    mode: "0750"
+    owner: "root"
+    group: "{{ mysqlbkp_dir_group }}"
 
 - name: config file create for backup
   lineinfile:
     path: /etc/{{ bkpprefix }}mysqlbkp/mysql
     regexp: "{{ mysql_db }} {{ bkp_path }}"
     line: "{{ mysql_db }} {{ bkp_path }}"
+    create: true
+    mode: "0600"
+    owner: "root"
+    group: "root"

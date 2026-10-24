@@ -5,13 +5,21 @@
     state: directory
     mode: 0750
     owner: "root"
-    group: "root"
+    group: "{{ mysqlbkp_dir_group }}"
 
 - name: file create for config
   file:
     path: "/etc/{{ bkpprefix }}mysqlbkp/mysql"
     state: touch
-    mode: 0750
+    mode: "0600"
+    owner: "root"
+    group: "root"
+
+- name: ensure log file exists
+  file:
+    path: /var/log/mysqlbkp.log
+    state: touch
+    mode: "0600"
     owner: "root"
     group: "root"
 
@@ -19,16 +27,17 @@
   template:
     src: "mysqlbkp.sh.j2"
     dest: "/usr/local/sbin/mysqlbkp"
-    mode: 0755
+    mode: 0700
     owner: "root"
     group: "root"
+  no_log: true
 
 - name: cronjob create
   cron:
     name: "mysql backup by list"
     minute: "03"
     hour: "0"
-    job: /usr/local/sbin/mysqlbkp >/var/log/mysqlbkp.log 2>&1
+    job: "umask 077; /usr/local/sbin/mysqlbkp >/var/log/mysqlbkp.log 2>&1"
 
 - name: logrotate mysqlbkp
   template:
@@ -37,3 +46,5 @@
     mode: 0644
     owner: "root"
     group: "root"
+  vars:
+    mysqlbkp_log_name: "/var/log/mysqlbkp.log"

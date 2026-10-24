@@ -1,4 +1,25 @@
 ---
+- name: duplicitybkp | require mysqlbkp_host
+  ansible.builtin.assert:
+    that:
+      - mysqlbkp_host is defined
+      - mysqlbkp_host | string | length > 0
+    fail_msg: >-
+      mysqlbkp_host is required for bkptype=mysql / mysqlclient_fullcfg.
+    quiet: true
+  when: bkptype in ['mysql', 'mysqlclient_fullcfg']
+
+- name: duplicitybkp | require mysqlbkp_pass
+  ansible.builtin.assert:
+    that:
+      - mysqlbkp_pass | default('', true) | string | trim | length > 0
+    fail_msg: >-
+      mysqlbkp_pass is empty or unreadable. Put the password into
+      credentials-crypt/<mysqlbkp_host>/mysql_bkp_password in the consuming
+      project (git-crypt, {{ playbook_dir }}/credentials-crypt) or set
+      mysqlbkp_pass explicitly.
+    quiet: true
+  when: bkptype in ['mysql', 'mysqlclient_fullcfg']
 
 - name: debug
   ansible.builtin.debug:

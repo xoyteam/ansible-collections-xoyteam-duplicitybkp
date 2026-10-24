@@ -3,10 +3,25 @@
   file:
     path: "{{ mysqlbkp_config_path }}"
     state: directory
+    mode: "0750"
+    owner: "root"
+    group: "{{ mysqlbkp_dir_group }}"
+
+- name: ensure data directory exists
+  file:
+    path: "{{ mysqlbkp_data_path }}"
+    state: directory
+    mode: "0750"
+    owner: "root"
+    group: "{{ mysqlbkp_dir_group }}"
 
 - name: create configfile for backup
   lineinfile:
     path: "{{ mysqlbkp_config_name }}"
     regexp: "{{ mysqlbkp_db }}.*"
-    line: "{{ mysqlbkp_db }} {{ mysqlbkp_data_path }} {{ mysqlbkp_host }} {{ mysqlbkp_port }} {{ mysqlbkp_user }} {{ mysqlbkp_pass }}"
+    line: "{{ mysqlbkp_db }} {{ mysqlbkp_data_path }} {{ mysqlbkp_host }} {{ mysqlbkp_port }} {{ mysqlbkp_user }} b64:{{ mysqlbkp_pass | b64encode }}"
     create: true
+    mode: "0600"
+    owner: "root"
+    group: "root"
+  no_log: true
