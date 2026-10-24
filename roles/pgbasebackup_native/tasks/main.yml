@@ -1,4 +1,35 @@
 ---
+- name: default PGDATA stat
+  ansible.builtin.set_fact:
+    pgbinbkp_pgdata_stat:
+      stat:
+        isdir: false
+
+- name: check PGDATA
+  ansible.builtin.stat:
+    path: "{{ pgbinbkp_pgdata }}"
+  register: pgbinbkp_pgdata_stat
+  when: pgbinbkp_pgdata | default('') | length > 0
+
+- name: require pgbinbkp_pgdata
+  ansible.builtin.assert:
+    that:
+      - pgbinbkp_pgdata | default('') | length > 0
+      - pgbinbkp_pgdata_stat.stat.isdir | default(false)
+    fail_msg: >-
+      pgbinbkp_pgdata must point to the PostgreSQL data directory on the
+      target host (for example /var/lib/postgresql/16/main).
+    quiet: true
+
+- name: require pgbinbkp_pgpass
+  ansible.builtin.assert:
+    that:
+      - pgbinbkp_pgpass | default('') | length > 0
+    fail_msg: >-
+      pgbinbkp_pgpass is empty. Pass the PostgreSQL password from
+      vault/secret manager.
+    quiet: true
+
 - name: create directories
   file:
     path:  "{{ item.path  }}"
@@ -17,6 +48,7 @@
     mode:  "0700"
     owner: "root"
     group: "root"
+  no_log: true
 
 - name: create cron task
   cron:

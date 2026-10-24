@@ -1,51 +1,105 @@
 #!/bin/bash
-set -x
+set -Eeuo pipefail
 ###******************************************************************************************###
 
 BACKUPNAME="{{ pgbinbkp_jobname }}"
-BASEBACKUP_DATA_PATH="{{ pgbinbkp_data_path }}"
+CURRENT={{ pgbinbkp_data_path | quote }}
+PGDATA={{ pgbinbkp_pgdata | quote }}
 PGHOST="{{ pgbinbkp_pghost }}"
 PGPORT="{{ pgbinbkp_pgport }}"
 PGUSER="{{ pgbinbkp_pguser }}"
-PG_PASS="{{ pgbinbkp_pgpass }}"
+PG_PASS={{ pgbinbkp_pgpass | quote }}
 PG_BASEBACKUP_OPTIONS="{{ pgbinbkp_basebackup_options }}"
+SPACE_MARGIN_PERCENT="{{ pgbinbkp_space_margin_percent | default(20) }}"
+NODE_EXPORTER_DIR={{ node_exporter_textfile_dir | default('') | quote }}
 ###******************************************************************************************###
-PG_BASEBACKUP="$(command -v pg_basebackup)"
+PG_BASEBACKUP="$(command -v pg_basebackup || true)"
 DATE="$(command -v date)"
 NOW=$($DATE +%Y%m%d_%H%M%S)
-node_exporter_textfile_dir="{{ node_exporter_textfile_dir }}"
 
-read -r -d '' METRIC_PREFIX << EOM
-# HELP duplicity_backup frecuency backup
+METRIC_PREFIX='# HELP duplicity_backup frecuency backup
 # TYPE duplicity_backup counter
-duplicity_backup{type="pg_basebackup_native",project="${BACKUPNAME}"}
-EOM
+duplicity_backup{type="pg_basebackup_native",project="'"${BACKUPNAME}"'"}'
 
-###******************************************************************************************###
-create_backup_act()
-{
-    set -o pipefail
+REPLACING=0
+SUCCESS=0
 
-    rm -vRf ${BASEBACKUP_DATA_PATH}/{*,.*}
-    PGPASSWORD=$PG_PASS $PG_BASEBACKUP -D "$BASEBACKUP_DATA_PATH" -h "${PGHOST}" -p "${PGPORT}" -U "${PGUSER}" $PG_BASEBACKUP_OPTIONS
-
-    rc=$?; ARCHIVE_SIZE=$(du -sh "${BASEBACKUP_DATA_PATH}")
-    if [[ $rc == 0 ]]; then echo "$NOW: Backup database was created, archive size $ARCHIVE_SIZE"; fi
-    if [[ $rc == 0 ]]; then
-      if [ -f $node_exporter_textfile_dir/${BACKUPNAME}.prom ]; then
-        cat $node_exporter_textfile_dir/${BACKUPNAME}.prom \
-          | grep -v '^\s*#' \
-          | awk -v PREFIX="$METRIC_PREFIX" '{a = ++$2; if ( a > 9 ) a = 1; print PREFIX, a}' \
-          | tee $node_exporter_textfile_dir/${BACKUPNAME}.prom.$ >/dev/null
-        mv $node_exporter_textfile_dir/${BACKUPNAME}.prom.$  $node_exporter_textfile_dir/${BACKUPNAME}.prom
-      else
-        echo -e "${METRIC_PREFIX} 1" > $node_exporter_textfile_dir/${BACKUPNAME}.prom.$
-        mv $node_exporter_textfile_dir/${BACKUPNAME}.prom.$  $node_exporter_textfile_dir/${BACKUPNAME}.prom
-      fi
-    fi
+cleanup() {
+  local rc=$?
+  trap - EXIT
+  if [ "$REPLACING" -eq 1 ] && [ "$SUCCESS" -ne 1 ]; then
+    echo "$NOW: removing incomplete backup $CURRENT" >&2
+    rm -rf -- "${CURRENT:?}"
+  fi
+  exit "$rc"
 }
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
-##_MAIN_
-  create_backup_act;
+if [ -z "$CURRENT" ] || [ "$CURRENT" = "/" ]; then
+  echo "$NOW: refusing unsafe backup path: '$CURRENT'" >&2
+  exit 1
+fi
+
+if [ -z "$PG_BASEBACKUP" ]; then
+  echo "$NOW: pg_basebackup not found" >&2
+  exit 1
+fi
+
+if [ ! -d "$PGDATA" ]; then
+  echo "$NOW: PGDATA is not a directory: $PGDATA" >&2
+  exit 1
+fi
+
+# --- free space check before deleting the current copy ---
+need_kb=$(du -sk -- "$PGDATA" | awk '{print $1}')
+need_kb=$(( need_kb + need_kb * SPACE_MARGIN_PERCENT / 100 ))
+avail_kb=$(df -Pk -- "$(dirname -- "$CURRENT")" | awk 'NR==2 {print $4}')
+if [ -d "$CURRENT" ]; then
+  current_kb=$(du -sk -- "$CURRENT" | awk '{print $1}')
+  avail_kb=$(( avail_kb + current_kb ))
+fi
+if [ "$avail_kb" -lt "$need_kb" ]; then
+  echo "$NOW: not enough space: need ${need_kb}K, have ${avail_kb}K" >&2
+  exit 1
+fi
+echo "$NOW: space check ok: need ${need_kb}K, have ${avail_kb}K"
+
+# --- replace the current local backup ---
+umask 077
+REPLACING=1
+rm -rf -- "${CURRENT:?}"
+mkdir -p -- "$CURRENT"
+
+if ! PGPASSWORD="$PG_PASS" "$PG_BASEBACKUP" -D "$CURRENT" -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" $PG_BASEBACKUP_OPTIONS; then
+  echo "$NOW: pg_basebackup failed" >&2
+  exit 1
+fi
+
+chmod -R go-rwx -- "$CURRENT"
+chmod 0700 -- "$CURRENT"
+ARCHIVE_SIZE=$(du -sh -- "$CURRENT" | awk '{print $1}')
+SUCCESS=1
+echo "$NOW: backup created: $CURRENT ($ARCHIVE_SIZE)"
+
+# --- metrics: best effort, must not fail the backup ---
+if [ -n "$NODE_EXPORTER_DIR" ] && [ -d "$NODE_EXPORTER_DIR" ]; then
+  (
+    if [ -f "$NODE_EXPORTER_DIR/${BACKUPNAME}.prom" ]; then
+      cat "$NODE_EXPORTER_DIR/${BACKUPNAME}.prom" \
+        | grep -v '^\s*#' \
+        | awk -v PREFIX="$METRIC_PREFIX" '{a = ++$2; if ( a > 9 ) a = 1; print PREFIX, a}' \
+        | tee "$NODE_EXPORTER_DIR/${BACKUPNAME}.prom.$" >/dev/null
+      mv "$NODE_EXPORTER_DIR/${BACKUPNAME}.prom.$" "$NODE_EXPORTER_DIR/${BACKUPNAME}.prom"
+    else
+      echo -e "${METRIC_PREFIX} 1" > "$NODE_EXPORTER_DIR/${BACKUPNAME}.prom.$"
+      mv "$NODE_EXPORTER_DIR/${BACKUPNAME}.prom.$" "$NODE_EXPORTER_DIR/${BACKUPNAME}.prom"
+    fi
+  ) || echo "$NOW: warning: failed to update metric" >&2
+else
+  echo "$NOW: warning: node_exporter_textfile_dir is not set or missing; metric not updated" >&2
+fi
+
+trap - EXIT
 exit 0
-
