@@ -1,0 +1,13 @@
+docker_compose_home: "/home/docker"
+
+dkr_pgbackup_image_tag: "16-bookworm"
+dkr_pgbackup_image: postgres:{{ dkr_pgbackup_image_tag }}
+dkr_pgbackup_install_path: "{{ docker_compose_home }}/pgbackup"
+
+dkr_pgbackup_login_user: postgres
+dkr_pgbackup_login_pass: ""
+dkr_pgbackup_login_host: localhost
+dkr_pgbackup_login_port: 5432
+dkr_pgbackup_login_db:   postgres
+dkr_pgbackup_login_ssl:  disabled
+
