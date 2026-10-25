@@ -1,0 +1,54 @@
+---
+- name: require pgdkr settings
+  ansible.builtin.assert:
+    that:
+      - bkp_name | default('') | length > 0
+      - pgdkr_pgpass | default('') | length > 0
+    fail_msg: >-
+      bkp_name and pgdkr_pgpass are required. pgdkr_pgpass must come from
+      vault/secret manager.
+    quiet: true
+
+- name: ensure directories exist
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    mode: "{{ item.mode }}"
+    owner: "root"
+    group: "root"
+  loop:
+    - { path: "{{ pgdkr_bin_path }}", mode: "0700" }
+    - { path: "{{ pgdkr_data_path }}", mode: "0700" }
+    - { path: "{{ pgdkr_log_path }}", mode: "0750" }
+
+- name: ensure log file exists
+  ansible.builtin.file:
+    path: "{{ pgdkr_log_name }}"
+    state: touch
+    mode: "0640"
+    owner: "root"
+    group: "root"
+
+- name: install script
+  ansible.builtin.template:
+    src: "script.sh.j2"
+    dest: "{{ pgdkr_bin_name }}"
+    mode: "0700"
+    owner: "root"
+    group: "root"
+  no_log: true
+
+- name: create cron task
+  ansible.builtin.cron:
+    name: "pg_basebackup docker job {{ pgdkr_jobname }}"
+    minute: "{{ pgdkr_cron_minute }}"
+    hour: "{{ pgdkr_cron_hour }}"
+    job: "{{ pgdkr_bin_name }} >>{{ pgdkr_log_name }} 2>&1"
+
+- name: logrotate configure
+  ansible.builtin.template:
+    src: "logrotate.j2"
+    dest: "/etc/logrotate.d/{{ pgdkr_logrotate_name }}"
+    mode: "0644"
+    owner: "root"
+    group: "root"

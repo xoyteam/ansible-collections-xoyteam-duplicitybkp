@@ -1,0 +1,222 @@
+#!/bin/bash
+set -Eeuo pipefail
+###******************************************************************************************###
+
+JOBNAME="{{ pgdkr_jobname }}"
+CURRENT={{ pgdkr_data_path | quote }}
+DB_CONTAINER={{ pgdkr_db_container | quote }}
+IMAGE={{ pgdkr_image | quote }}
+POSTGRES_VERSION="{{ postgres_version | default('') }}"
+NETWORK={{ pgdkr_network | quote }}
+CONTAINER_USER="{{ pgdkr_container_user }}"
+DOCKER="{{ pgdkr_docker_bin }}"
+PGDATA={{ pgdkr_pgdata | quote }}
+PGHOST="{{ pgdkr_pghost }}"
+PGPORT="{{ pgdkr_pgport }}"
+PGUSER="{{ pgdkr_pguser }}"
+PG_PASS={{ pgdkr_pgpass | quote }}
+PG_BASEBACKUP_OPTIONS="{{ pgdkr_basebackup_options }}"
+SPACE_MARGIN_PERCENT="{{ pgdkr_space_margin_percent | default(20) }}"
+MIN_FREE_KB="{{ pgdkr_min_free_kb | default(0) }}"
+NODE_EXPORTER_DIR={{ node_exporter_textfile_dir | default('') | quote }}
+###******************************************************************************************###
+
+DATE="$(command -v date)"
+NOW=$($DATE +%Y%m%d_%H%M%S)
+
+detect_pg_version() {
+  local v=""
+  if command -v psql >/dev/null 2>&1; then
+    v=$(psql --version 2>/dev/null | sed -n 's/.*PostgreSQL[^0-9]*\([0-9][0-9]*\).*/\1/p')
+  fi
+  if [ -z "$v" ] && command -v pg_config >/dev/null 2>&1; then
+    v=$(pg_config --version 2>/dev/null | sed -n 's/.*PostgreSQL[^0-9]*\([0-9][0-9]*\).*/\1/p')
+  fi
+  if [ -z "$v" ] && command -v postgres >/dev/null 2>&1; then
+    v=$(postgres --version 2>/dev/null | sed -n 's/.*PostgreSQL[^0-9]*\([0-9][0-9]*\).*/\1/p')
+  fi
+  if [ -z "$v" ]; then
+    local bin
+    for bin in /usr/lib/postgresql/*/bin/postgres; do
+      [ -x "$bin" ] || continue
+      v=$("$bin" --version 2>/dev/null | sed -n 's/.*PostgreSQL[^0-9]*\([0-9][0-9]*\).*/\1/p')
+      [ -n "$v" ] && break
+    done
+  fi
+  printf '%s' "$v"
+}
+
+METRIC_PREFIX='# HELP duplicity_backup frecuency backup
+# TYPE duplicity_backup counter
+duplicity_backup{type="pg_basebackup_dkr",project="'"${JOBNAME}"'"}'
+
+ENV_FILE=""
+REPLACING=0
+SUCCESS=0
+
+cleanup() {
+  local rc=$?
+  trap - EXIT
+  if [ -n "${ENV_FILE:-}" ]; then
+    rm -f -- "$ENV_FILE"
+  fi
+  if [ "$REPLACING" -eq 1 ] && [ "$SUCCESS" -ne 1 ]; then
+    echo "$NOW: removing incomplete backup $CURRENT" >&2
+    rm -rf -- "${CURRENT:?}"
+  fi
+  exit "$rc"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+if [ -z "$CURRENT" ] || [ "$CURRENT" = "/" ]; then
+  echo "$NOW: refusing unsafe backup path: '$CURRENT'" >&2
+  exit 1
+fi
+
+if ! command -v "$DOCKER" >/dev/null 2>&1; then
+  echo "$NOW: docker binary not found: $DOCKER" >&2
+  exit 1
+fi
+
+# --- resolve the DB container (explicit, auto-detected, or external) ---
+if [ -z "$DB_CONTAINER" ]; then
+  mapfile -t pg_candidates < <("$DOCKER" ps --format '{% raw %}{{.Names}} {{.Image}}{% endraw %}' 2>/dev/null | awk '$2 ~ /(^|\/)postgres(ql)?(:|@|$)/ {print $1}')
+  set -- "${pg_candidates[@]}"
+  if [ "$#" -eq 0 ]; then
+    if [ -z "$NETWORK" ]; then
+      echo "$NOW: no running PostgreSQL container found; set pgdkr_db_container, or pgdkr_network + pgdkr_pghost for an external DB" >&2
+      exit 1
+    fi
+  elif [ "$#" -eq 1 ]; then
+    DB_CONTAINER="$1"
+  elif [ -n "$POSTGRES_VERSION" ]; then
+    mapfile -t pg_matched < <("$DOCKER" ps --format '{% raw %}{{.Names}} {{.Image}}{% endraw %}' 2>/dev/null | awk -v v="$POSTGRES_VERSION" '$2 ~ ("(^|/)postgres(ql)?:" v "([.-]|$)") {print $1}')
+    set -- "${pg_matched[@]}"
+    if [ "$#" -eq 1 ]; then
+      DB_CONTAINER="$1"
+    else
+      echo "$NOW: several PostgreSQL containers match version $POSTGRES_VERSION; set pgdkr_db_container" >&2
+      exit 1
+    fi
+  else
+    echo "$NOW: several PostgreSQL containers found; set pgdkr_db_container or postgres_version" >&2
+    exit 1
+  fi
+fi
+
+if [ -n "$DB_CONTAINER" ]; then
+  if [ "$("$DOCKER" inspect -f '{% raw %}{{.State.Running}}{% endraw %}' "$DB_CONTAINER" 2>/dev/null || true)" != "true" ]; then
+    echo "$NOW: DB container is not running: $DB_CONTAINER" >&2
+    exit 1
+  fi
+fi
+
+# --- resolve the image (explicit, from the DB container, or from PG version) ---
+if [ -z "$IMAGE" ] && [ -n "$DB_CONTAINER" ]; then
+  IMAGE="$("$DOCKER" inspect -f '{% raw %}{{.Config.Image}}{% endraw %}' "$DB_CONTAINER" 2>/dev/null || true)"
+fi
+if [ -z "$IMAGE" ]; then
+  if [ -n "$POSTGRES_VERSION" ]; then
+    IMAGE="postgres:${POSTGRES_VERSION}"
+  else
+    DETECTED_VERSION="$(detect_pg_version)"
+    if [ -z "$DETECTED_VERSION" ]; then
+      echo "$NOW: cannot determine PostgreSQL version; set postgres_version in inventory or pgdkr_image" >&2
+      exit 1
+    fi
+    IMAGE="postgres:${DETECTED_VERSION}"
+    echo "$NOW: image not set, detected PostgreSQL $DETECTED_VERSION on host"
+  fi
+fi
+
+if [ -z "$NETWORK" ]; then
+  if [ -z "$DB_CONTAINER" ]; then
+    echo "$NOW: cannot determine docker network; set pgdkr_network" >&2
+    exit 1
+  fi
+  NETWORK="container:${DB_CONTAINER}"
+fi
+
+# --- free space check before deleting the current copy ---
+case "${SPACE_MARGIN_PERCENT:-}" in
+  ''|*[!0-9]*) SPACE_MARGIN_PERCENT=20 ;;
+esac
+case "${MIN_FREE_KB:-}" in
+  ''|*[!0-9]*) MIN_FREE_KB=0 ;;
+esac
+
+need_kb=0
+if [ -n "$DB_CONTAINER" ] && [ -n "$PGDATA" ]; then
+  need_kb="$("$DOCKER" exec "$DB_CONTAINER" du -sk "$PGDATA" 2>/dev/null | awk '{print $1}' || true)"
+fi
+case "${need_kb:-}" in
+  ''|*[!0-9]*) need_kb=0 ;;
+esac
+if [ "$need_kb" -eq 0 ] && [ -d "$CURRENT" ]; then
+  need_kb=$(du -sk -- "$CURRENT" | awk '{print $1}')
+fi
+if [ "$need_kb" -eq 0 ]; then
+  need_kb="$MIN_FREE_KB"
+fi
+
+if [ "$need_kb" -gt 0 ]; then
+  need_kb=$(( need_kb + need_kb * SPACE_MARGIN_PERCENT / 100 ))
+  avail_kb=$(df -Pk -- "$(dirname -- "$CURRENT")" | awk 'NR==2 {print $4}')
+  if [ -d "$CURRENT" ]; then
+    current_kb=$(du -sk -- "$CURRENT" | awk '{print $1}')
+    avail_kb=$(( avail_kb + current_kb ))
+  fi
+  if [ "$avail_kb" -lt "$need_kb" ]; then
+    echo "$NOW: not enough space: need ${need_kb}K, have ${avail_kb}K" >&2
+    exit 1
+  fi
+  echo "$NOW: space check ok: need ${need_kb}K, have ${avail_kb}K"
+else
+  echo "$NOW: warning: cannot estimate backup size; free space check skipped" >&2
+fi
+
+# --- password via a temporary 0600 env-file, not via docker run argv ---
+ENV_FILE=$(mktemp "${TMPDIR:-/tmp}/pgdkr-env.XXXXXX")
+chmod 600 "$ENV_FILE"
+printf 'PGPASSWORD=%s\n' "$PG_PASS" > "$ENV_FILE"
+
+# --- replace the current local backup ---
+umask 077
+REPLACING=1
+rm -rf -- "${CURRENT:?}"
+mkdir -p -- "$CURRENT"
+
+if ! "$DOCKER" run --rm --user "$CONTAINER_USER" --network "$NETWORK" \
+      --env-file "$ENV_FILE" -v "$CURRENT:/backup:rw" --entrypoint pg_basebackup "$IMAGE" \
+      -D /backup -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" $PG_BASEBACKUP_OPTIONS; then
+  echo "$NOW: pg_basebackup in docker failed" >&2
+  exit 1
+fi
+
+chmod -R go-rwx -- "$CURRENT"
+chmod 0700 -- "$CURRENT"
+ARCHIVE_SIZE=$(du -sh -- "$CURRENT" | awk '{print $1}')
+SUCCESS=1
+echo "$NOW: backup created: $CURRENT ($ARCHIVE_SIZE)"
+
+# --- metrics: best effort, must not fail the backup ---
+if [ -n "$NODE_EXPORTER_DIR" ] && [ -d "$NODE_EXPORTER_DIR" ]; then
+  (
+    if [ -f "$NODE_EXPORTER_DIR/${JOBNAME}.prom" ]; then
+      cat "$NODE_EXPORTER_DIR/${JOBNAME}.prom" \
+        | grep -v '^\s*#' \
+        | awk -v PREFIX="$METRIC_PREFIX" '{a = ++$2; if ( a > 9 ) a = 1; print PREFIX, a}' \
+        | tee "$NODE_EXPORTER_DIR/${JOBNAME}.prom.$" >/dev/null
+      mv "$NODE_EXPORTER_DIR/${JOBNAME}.prom.$" "$NODE_EXPORTER_DIR/${JOBNAME}.prom"
+    else
+      echo -e "${METRIC_PREFIX} 1" > "$NODE_EXPORTER_DIR/${JOBNAME}.prom.$"
+      mv "$NODE_EXPORTER_DIR/${JOBNAME}.prom.$" "$NODE_EXPORTER_DIR/${JOBNAME}.prom"
+    fi
+  ) || echo "$NOW: warning: failed to update metric" >&2
+else
+  echo "$NOW: warning: node_exporter_textfile_dir is not set or missing; metric not updated" >&2
+fi
+
+exit 0

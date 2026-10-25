@@ -1,0 +1,51 @@
+---
+# Paths intentionally mirror pgbasebackup_native, so duplicity sees the same
+# layout: <duplicitybkp_path>/{bin,data,log}/<job>.
+duplicitybkp_path:      "{{ backup_dir | default('/home/backup') }}"
+duplicitybkp_bin_path:  "{{ duplicitybkp_path }}/bin"
+duplicitybkp_data_path: "{{ duplicitybkp_path }}/data"
+duplicitybkp_log_path:  "{{ duplicitybkp_path }}/log"
+
+# Keep the same job name as pgbasebackup_native: the role is an alternative
+# implementation for the same logical backup, so duplicity paths do not change.
+pgdkr_jobname_prefix: "{{ bkp_name }}"
+pgdkr_jobname:        "{{ pgdkr_jobname_prefix }}_pgbasebackup"
+pgdkr_bin_path:       "{{ duplicitybkp_bin_path }}"
+pgdkr_bin_name:       "{{ pgdkr_bin_path }}/{{ pgdkr_jobname }}.sh"
+pgdkr_data_path:      "{{ duplicitybkp_data_path }}/{{ pgdkr_jobname }}"
+pgdkr_log_path:       "{{ duplicitybkp_log_path }}"
+pgdkr_log_name:       "{{ pgdkr_log_path }}/{{ pgdkr_jobname }}.log"
+pgdkr_logrotate_name: "{{ pgdkr_jobname }}"
+
+# Docker/DB container settings.
+# pgdkr_db_container is optional: if empty, the role tries to find a single
+# running PostgreSQL container. If several are found, postgres_version is used
+# to select one; otherwise set pgdkr_db_container explicitly.
+pgdkr_db_container:  ""
+# Shared inventory variable for the future common PostgreSQL role.
+# Example: "16". Used to select an image/container when it cannot be derived
+# from a running container.
+postgres_version:    ""
+# Empty -> container:<resolved db container>.
+pgdkr_network:       ""
+# Empty -> use the image of the DB container.
+pgdkr_image:         ""
+pgdkr_container_user: "0:0"
+pgdkr_docker_bin:    "docker"
+
+# PostgreSQL connection. PGDATA is the path inside the DB container and is
+# used only for the free-space estimate via `docker exec du`.
+pgdkr_pgdata:             "/var/lib/postgresql/data"
+pgdkr_pghost:             "127.0.0.1"
+pgdkr_pgport:             5432
+pgdkr_pguser:             "postgres"
+pgdkr_pgpass:             ""
+pgdkr_basebackup_options: "-c fast"
+
+# Free space reserve on top of the PGDATA size, percent.
+pgdkr_space_margin_percent: 20
+# Fallback when the size cannot be estimated via docker exec.
+pgdkr_min_free_kb: 0
+
+pgdkr_cron_minute: "03"
+pgdkr_cron_hour:   "0"

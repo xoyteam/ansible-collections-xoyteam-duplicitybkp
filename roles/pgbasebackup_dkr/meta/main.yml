@@ -1,0 +1,13 @@
+---
+galaxy_info:
+  author: Yuriy Zyga
+  description: PostgreSQL physical backup via pg_basebackup in a Docker container
+  company: xoyteam
+  license: GPL-3.0-or-later
+  min_ansible_version: "2.12"
+  galaxy_tags:
+    - database
+    - postgresql
+    - docker
+
+dependencies: []

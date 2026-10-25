@@ -25,13 +25,14 @@ Ansible-коллекция для резервного копирования:
 1. [Состав коллекции](#состав-коллекции)
 2. [Роль `duplicitybkp`](#роль-duplicitybkp)
 3. [Роль `pgbasebackup_native`](#роль-pgbasebackup_native)
-4. [Роли `pg_docker` и `dkr_pgbackup`](#роли-pg_docker-и-dkr_pgbackup)
-5. [Роль `install_duplicity`](#роль-install_duplicity)
-6. [Зависимости и установка](#зависимости-и-установка)
-7. [Безопасность](#безопасность)
-8. [Известные проблемы и подводные камни](#известные-проблемы-и-подводные-камни)
-9. [История: что и зачем менялось](#история-что-и-зачем-менялось)
-10. [Лицензия](#лицензия)
+4. [Роль `pgbasebackup_dkr`](#роль-pgbasebackup_dkr)
+5. [Роль `pg_docker`](#роль-pg_docker)
+6. [Роль `install_duplicity`](#роль-install_duplicity)
+7. [Зависимости и установка](#зависимости-и-установка)
+8. [Безопасность](#безопасность)
+9. [Известные проблемы и подводные камни](#известные-проблемы-и-подводные-камни)
+10. [История: что и зачем менялось](#история-что-и-зачем-менялось)
+11. [Лицензия](#лицензия)
 
 ---
 
@@ -45,8 +46,8 @@ plugins/                    пусто (только README-заглушка)
 roles/
 ├── duplicitybkp/           основной «комбайн»: duplicity + mysql + swift/s3/ssh
 ├── pgbasebackup_native/    физический бэкап PostgreSQL через pg_basebackup
+├── pgbasebackup_dkr/       pg_basebackup в Docker-контейнере
 ├── pg_docker/              запуск PostgreSQL в docker compose (заготовка)
-├── dkr_pgbackup/           бэкап-сервис в Docker (заготовка, нерабочая)
 └── install_duplicity/      пустая заготовка
 ```
 
@@ -54,8 +55,8 @@ roles/
 |------|------------|-----------|
 | `duplicitybkp` | Устанавливает duplicity и по переменной `bkptype` генерирует скрипты, конфиги, cron и logrotate для файловых бэкапов, MySQL, Swift, S3, SSH | Рабочая, но требует внешних переменных; см. ограничения |
 | `pgbasebackup_native` | `pg_basebackup` + cron + logrotate + метрика для node_exporter | Рабочая, добавлена в мае 2025 |
+| `pgbasebackup_dkr` | `pg_basebackup` в Docker-контейнере + cron, logrotate, метрика | Рабочая; PostgreSQL-клиент на хосте не нужен |
 | `pg_docker` | Поднимает контейнер PostgreSQL через `docker compose` | Заготовка, handler содержит ошибку |
-| `dkr_pgbackup` | Заготовка compose-сервиса для бэкапа PostgreSQL | Фактически нерабочая: шаблон скопирован от postgres-exporter |
 | `install_duplicity` | Должна была ставить duplicity | Пустая, не используется |
 
 ---
@@ -444,24 +445,101 @@ best-effort.
 
 ---
 
-## Роли `pg_docker` и `dkr_pgbackup`
+## Роль `pgbasebackup_dkr`
 
-Обе роли — заготовки из шаблона cookiecutter, а не готовый инструмент.
+То же, что `pgbasebackup_native`, но `pg_basebackup` выполняется в Docker-контейнере.
+На хост не ставится PostgreSQL-клиент: нужны Docker CLI/daemon и образ с
+`pg_basebackup`; если образа нет, Docker скачает его. База тоже работает в
+контейнере.
 
-`pg_docker` рендерит compose-файл с `postgres:<tag>` (по умолчанию 13.20), порт
-`5433:5432`, том `./data`, tmpfs. Роль создаёт каталоги и compose-файл, но не
-запускает контейнер. Handler использует устаревший модуль `docker_compose` и
-обращается к незарегистрированной переменной `pgdocker_docker_compose`.
+Что делает роль:
 
-`dkr_pgbackup` ещё дальше от рабочего состояния: в compose-файле образ PostgreSQL,
-но environment и healthcheck (`localhost:9187/metrics`) скопированы от
-postgres-exporter; handler ссылается на несуществующую
-`dkr_pgbackup_exporter_install_path`; шаблон использует `postgres_login_*`, а
-defaults объявляют `dkr_pgbackup_login_*`.
+1. Проверяет Docker, находит контейнер БД и образ; если образа нет — Docker скачает.
+2. Оценивает размер `PGDATA` через `docker exec ... du -sk` и проверяет свободное
+   место на хосте.
+3. Кладёт `PGPASSWORD` во временный файл `0600` и передаёт его в контейнер через
+   `--env-file` — пароль не попадает в аргументы `docker run`/`ps`.
+4. Удаляет текущий бэкап и создаёт новый на его месте в контейнере:
+   `docker run --rm --network ... --entrypoint pg_basebackup`.
+5. При ошибке удаляет недоделанный каталог и временный env-файл, возвращает `1`;
+   при успехе — `0`.
+6. Оставляет только текущую локальную копию; старые копии не хранятся.
 
-Обе роли используют модуль `docker_compose` (v1). Для новых Docker нужен
-`community.docker.docker_compose_v2`. Роли не рекомендуется применять без
-переработки.
+Версия/образ выбирается так: `pgdkr_image` → образ контейнера БД →
+`postgres:<postgres_version>` → определение версии PostgreSQL на хосте → ошибка с
+требованием задать `postgres_version`. Контейнер: `pgdkr_db_container` → единственный
+запущенный PostgreSQL-контейнер → совпадение с `postgres_version` → внешняя БД при
+заданном `pgdkr_network`.
+
+Пути совпадают с `pgbasebackup_native`:
+
+```
+<duplicitybkp_path>/bin/<job>.sh
+<duplicitybkp_path>/log/<job>.log
+<duplicitybkp_path>/data/<job>
+```
+
+`pgdkr_jobname` по умолчанию `<bkp_name>_pgbasebackup`; SSH-режим duplicity
+забирает весь `duplicitybkp_data_path`. Для Swift/S3 задайте `backup_target` на
+`duplicitybkp_data_path` или на конкретный `<job>`.
+
+### Переменные
+
+| Переменная | По умолчанию | Обязательна/смысл |
+|------------|--------------|-------------------|
+| `bkp_name` | нет | Да: префикс имени задачи |
+| `pgdkr_pgpass` | пустая | Да: пароль PostgreSQL |
+| `pgdkr_db_container` | пусто | Нет: имя/id контейнера; пусто — автоопределение |
+| `postgres_version` | пусто | Нет: общая инвентарная версия PostgreSQL, например `"16"` |
+| `pgdkr_image` | пусто | Нет: явный образ; пусто — образ контейнера/`postgres:<version>` |
+| `pgdkr_pgdata` | `/var/lib/postgresql/data` | Нет: `PGDATA` внутри контейнера |
+| `pgdkr_pghost` / `pgdkr_pgport` | `127.0.0.1` / `5432` | Нет: адрес БД из backup-контейнера |
+| `pgdkr_pguser` | `postgres` | Нет |
+| `pgdkr_network` | пусто | Нет: пусто — `container:<найденный контейнер>` |
+| `pgdkr_space_margin_percent` | `20` | Нет |
+| `pgdkr_min_free_kb` | `0` | Нет: резервный минимум |
+| `backup_dir` | `/home/backup` | Нет |
+| `node_exporter_textfile_dir` | нет | Нет: без каталога метрика не пишется |
+| `pgdkr_cron_minute` / `pgdkr_cron_hour` | `03` / `0` | Нет |
+
+### Пример
+
+```yaml
+- name: PostgreSQL physical backup in Docker
+  hosts: dbservers
+  become: true
+  roles:
+    - role: xoyteam.duplicitybkp.pgbasebackup_dkr
+      vars:
+        bkp_name: pg01
+        backup_dir: /var/backups/pg
+        postgres_version: "16"
+        pgdkr_pgdata: /var/lib/postgresql/data
+        pgdkr_pguser: postgres
+        pgdkr_pgpass: change-me
+        node_exporter_textfile_dir: /var/lib/node_exporter/textfile
+```
+
+`pgdkr_db_container` можно не задавать, если запущен ровно один контейнер
+PostgreSQL; если контейнеров несколько, задайте его явно.
+
+Требования: Docker Engine/CLI, запущенный контейнер PostgreSQL и образ с
+`pg_basebackup`; при отсутствии образа Docker скачает его. Если БД доступна по
+имени в пользовательской Docker-сети, задайте `pgdkr_network` и `pgdkr_pghost`.
+
+> Пока идёт `pg_basebackup`, каталог данных неполный. duplicity не должен
+> запускаться одновременно.
+
+---
+
+## Роль `pg_docker`
+
+`pg_docker` — заготовка: рендерит compose-файл с `postgres:<tag>`, создаёт каталоги,
+но не запускает контейнер. Handler использует устаревший `docker_compose` (v1) и
+незарегистрированную `pgdocker_docker_compose`.
+
+Бывшая заготовка `dkr_pgbackup` переименована в `pgbasebackup_dkr` и переписана;
+отдельной роли `dkr_pgbackup` больше нет.
 
 ---
 
@@ -481,7 +559,7 @@ defaults объявляют `dkr_pgbackup_login_*`.
 |-------------|-------|
 | `community.crypto` | `openssh_keypair` в режиме `ssh_key` |
 | `ansible.posix` | `authorized_key` в режиме `ssh_key` |
-| `community.docker` | только для `pg_docker` / `dkr_pgbackup` |
+| `community.docker` | только для `pg_docker` |
 | `pg_basebackup` на хосте | роль `pgbasebackup_native` |
 | `duplicity` | устанавливается ролью, но можно поставить заранее |
 
@@ -599,7 +677,8 @@ cron-задания и перезаписывает конфиги.
 
 14. `pg_docker`: handler вызывает `docker_compose` (v1) и переменную
     `pgdocker_docker_compose`, которая нигде не регистрируется.
-15. `dkr_pgbackup`: шаблон и handler — от postgres-exporter, роль нерабочая.
+15. `dkr_pgbackup` переименован в `pgbasebackup_dkr` и переписан; роль `pg_docker`
+    остаётся нерабочей заготовкой.
 16. Мёртвые файлы: `tasks/ssh_duplicity.yml` и `tasks/duplicity_install_pip.yml`
     нигде не подключаются.
 17. `install_duplicity` пуста.
