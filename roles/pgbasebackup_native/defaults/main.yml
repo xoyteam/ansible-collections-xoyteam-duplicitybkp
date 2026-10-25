@@ -2,21 +2,13 @@
 # need pre installed
 #bkp_name: "test"
 #backup_dir: "{{ duplicitybkp_path }}"
+#pgbinbkp_pgpass: ""
 
 
 # defaults file for backup
 pgbinbkp_pghost: 127.0.0.1
 pgbinbkp_pgport: 5432
 pgbinbkp_pguser: postgres
-
-# Path to the live PostgreSQL data directory on the target host. Required.
-pgbinbkp_pgdata: ""
-
-# Extra free space reserve on top of the PGDATA size, percent.
-pgbinbkp_space_margin_percent: 20
-
-# PostgreSQL password. Required; pass it from vault/secret manager.
-pgbinbkp_pgpass: ""
 
 duplicitybkp_path:      "{{ backup_dir|default('/home/backup') }}"
 duplicitybkp_bin_path:  "{{ duplicitybkp_path }}/bin"
